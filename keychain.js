@@ -205,38 +205,46 @@ KeychainAccess.prototype.setPassword = function(opts, fn) {
     return;
   }
 
-  var security = spawnWithSecret(this.executablePath, [ 'add-'+opts.type+'-password', '-a', opts.account, '-s', opts.service, '-w', opts.password ]);
   var self = this;
+  var args = [ 'add-'+opts.type+'-password', '-a', opts.account, '-s', opts.service, '-w', opts.password ];
 
-  security.on('error', function(err) {
-    err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
-    fn(err, null);
-    return;
-  });
+  // Exit 45 means the item already exists: delete it and add again, once.
+  // If the add still fails the same way, report it rather than loop forever.
+  function add(retried) {
+    var security = spawnWithSecret(self.executablePath, args);
 
-  security.on('close', function(code, signal) {
-    if (code !== 0) {
-      if (code == 45) {
-        self.deletePassword(opts, function(err) {
-          if (err) {
-            fn(err);
+    security.on('error', function(err) {
+      err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
+      fn(err, null);
+      return;
+    });
+
+    security.on('close', function(code, signal) {
+      if (code !== 0) {
+        if (code == 45 && !retried) {
+          self.deletePassword(opts, function(err) {
+            if (err) {
+              fn(err);
+              return;
+            }
+
+            add(true);
             return;
-          }
-
-          self.setPassword(opts, fn);
+          });
+        } else {
+          var msg = 'Security returned a non-successful error code: ' + code;
+          err = new KeychainAccess.errors.ServiceFailureError(msg);
+          err.exitCode = code;
+          fn(err);
           return;
-        });
+        }
       } else {
-        var msg = 'Security returned a non-successful error code: ' + code;
-        err = new KeychainAccess.errors.ServiceFailureError(msg);
-        err.exitCode = code;
-        fn(err);
-        return;
+        fn(null, opts.password);
       }
-    } else {
-      fn(null, opts.password);
-    }
-  });
+    });
+  }
+
+  add(false);
 };
 
 /**

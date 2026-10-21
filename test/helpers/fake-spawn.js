@@ -10,7 +10,8 @@ var behavior = null;
 exports.calls = [];
 
 // script: { stdout, stderr, code } or { error: 'message' } (spawn failure:
-// emits 'error' then 'close' with code -2, the way Node does).
+// emits 'error' then 'close' with code -2, the way Node does), or a function
+// called with each spawn's { command, args } that returns a script.
 exports.respond = function (script) {
   behavior = script;
 };
@@ -30,8 +31,10 @@ exports.install = function () {
       end: function (data) { if (data) call.stdin += data; call.stdinEnded = true; },
       on: function () { return child.stdin; }
     };
-    var script = behavior || { code: 0 };
+    var current = behavior;
     setImmediate(function () {
+      // Evaluated once stdin has been written, so `security -i` calls can be told apart.
+      var script = (typeof current === 'function' ? current(call) : current) || { code: 0 };
       if (script.error) {
         var err = new Error(script.error);
         err.code = 'ENOENT';
