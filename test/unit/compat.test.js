@@ -262,7 +262,13 @@ describe('Backwards compatibility (pinned at 1.5.0)', function () {
     });
   });
 
-  describe('arguments passed to `security` (exact argv)', function () {
+  // The commands `security` executes are pinned, not the raw argv: since 1.6
+  // the two methods that carry a password (setPassword, createKeychain) send
+  // the command line over stdin to `security -i` so it never shows up in ps,
+  // and keychain names are protected with "--". What security *runs* is the
+  // same command 1.5.0 ran. mock.commands() is a port of security's own
+  // split_line, so this is what the tool would actually see.
+  describe('commands executed by `security` (exact, as security parses them)', function () {
     var cases = [
       ['getPassword', { account: 'A', service: 'S' }, ['find-generic-password', '-a', 'A', '-s', 'S', '-g']],
       ['getPassword', { account: 'A', service: 'S', type: 'internet' }, ['find-internet-password', '-a', 'A', '-s', 'S', '-g']],
@@ -270,17 +276,27 @@ describe('Backwards compatibility (pinned at 1.5.0)', function () {
       ['setPassword', { account: 'A', service: 'S', password: 'P', type: 'internet' }, ['add-internet-password', '-a', 'A', '-s', 'S', '-w', 'P']],
       ['deletePassword', { account: 'A', service: 'S' }, ['delete-generic-password', '-a', 'A', '-s', 'S']],
       ['deletePassword', { account: 'A', service: 'S', type: 'internet' }, ['delete-internet-password', '-a', 'A', '-s', 'S']],
-      ['createKeychain', { keychainName: 'K', password: 'P' }, ['create-keychain', '-p', 'P', 'K']],
-      ['deleteKeychain', { keychainName: 'K' }, ['delete-keychain', 'K']],
-      ['setDefaultKeychain', { keychainName: 'K' }, ['default-keychain', '-s', 'K']]
+      ['createKeychain', { keychainName: 'K', password: 'P' }, ['create-keychain', '-p', 'P', '--', 'K']],
+      ['deleteKeychain', { keychainName: 'K' }, ['delete-keychain', '--', 'K']],
+      ['setDefaultKeychain', { keychainName: 'K' }, ['default-keychain', '-s', '--', 'K']]
     ];
+    var secretMethods = ['setPassword', 'createKeychain'];
 
     cases.forEach(function (c) {
       var method = c[0], opts = c[1], argv = c[2];
       it(method + '(' + JSON.stringify(opts) + ') -> security ' + argv.join(' '), function (done) {
         mock.respond({ code: 0, stderr: 'password: "P"\n' });
         keychain[method](opts, function () {
-          expect(mock.calls).to.deep.equal([{ cmd: '/usr/bin/security', args: argv }]);
+          expect(mock.calls).to.have.length(1);
+          expect(mock.calls[0].cmd).to.equal('/usr/bin/security');
+          expect(mock.commands(mock.calls[0])).to.deep.equal([argv]);
+          if (secretMethods.indexOf(method) !== -1) {
+            // password travels on stdin via `security -i`, never in argv
+            expect(mock.calls[0].args).to.deep.equal(['-i']);
+            expect(mock.calls[0].args.join(' ')).to.not.contain('P');
+          } else {
+            expect(mock.calls[0].args).to.deep.equal(argv);
+          }
           done();
         });
       });
@@ -291,8 +307,10 @@ describe('Backwards compatibility (pinned at 1.5.0)', function () {
       keychain.setPassword({ account: 'a b', service: 's;rm -rf /', password: '$(id)' }, function () {
         expect(mock.calls[0].cmd).to.equal('/usr/bin/security');
         expect(mock.calls[0].args).to.be.an('array');
-        expect(mock.calls[0].args).to.include('s;rm -rf /');
-        expect(mock.calls[0].args).to.include('$(id)');
+        var cmd = mock.commands(mock.calls[0]);
+        expect(cmd).to.have.length(1);
+        expect(cmd[0]).to.include('s;rm -rf /');
+        expect(cmd[0]).to.include('$(id)');
         done();
       });
     });
@@ -304,7 +322,7 @@ describe('Backwards compatibility (pinned at 1.5.0)', function () {
       keychain.setPassword({ account: 'A', service: 'S', password: 'P' }, function (err, pass) {
         expect(err).to.equal(null);
         expect(pass).to.equal('P');
-        expect(mock.calls.map(function (c) { return c.args; })).to.deep.equal([
+        expect(mock.calls.map(function (c) { return mock.commands(c)[0]; })).to.deep.equal([
           ['add-generic-password', '-a', 'A', '-s', 'S', '-w', 'P'],
           ['delete-generic-password', '-a', 'A', '-s', 'S'],
           ['add-generic-password', '-a', 'A', '-s', 'S', '-w', 'P']

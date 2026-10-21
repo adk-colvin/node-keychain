@@ -40,7 +40,16 @@ function fakeSpawn(cmd, args) {
   child.stderr = new EventEmitter();
   child.pid = 4242;
   child.kill = function () {};
-  calls.push({ cmd: cmd, args: (args || []).slice() });
+  var call = { cmd: cmd, args: (args || []).slice(), stdin: '', stdinEnded: false };
+  // Record what the module writes to the child's stdin (`security -i` reads
+  // its command line from there so secrets stay out of argv).
+  child.stdin = {
+    write: function (data) { call.stdin += String(data); return true; },
+    end: function (data) { if (data !== undefined) call.stdin += String(data); call.stdinEnded = true; },
+    on: function () { return child.stdin; },
+    once: function () { return child.stdin; }
+  };
+  calls.push(call);
 
   var step = script.length ? script.shift() : { code: 0 };
 
@@ -76,6 +85,15 @@ module.exports = {
   unload: function () {
     childProcess.spawn = realSpawn;
     delete require.cache[MODULE_PATH];
+  },
+
+  /**
+   * What `security` actually executes for a recorded call: its argv, or for
+   * `security -i` the command lines it parses from stdin. Shares the split_line
+   * port with fake-spawn so both helpers agree on how security tokenizes.
+   */
+  commands: function (call) {
+    return require('./fake-spawn').commands(call);
   },
 
   /** Queue one scripted `security` run. */

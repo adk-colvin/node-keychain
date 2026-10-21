@@ -63,10 +63,9 @@ describe('KeychainAccess (unit, mocked security)', function () {
       keychain.getPassword({ account: 'me', service: 'svc' }, function (err, pass) {
         expect(err).to.equal(null);
         expect(pass).to.equal('hunter2');
-        expect(mock.calls).to.deep.equal([{
-          cmd: '/usr/bin/security',
-          args: ['find-generic-password', '-a', 'me', '-s', 'svc', '-g']
-        }]);
+        expect(mock.calls).to.have.length(1);
+        expect(mock.calls[0].cmd).to.equal('/usr/bin/security');
+        expect(mock.calls[0].args).to.deep.equal(['find-generic-password', '-a', 'me', '-s', 'svc', '-g']);
         done();
       });
     });
@@ -178,15 +177,18 @@ describe('KeychainAccess (unit, mocked security)', function () {
   });
 
   describe('.setPassword(opts, fn)', function () {
-    it('spawns security add-generic-password with -a/-s/-w and returns the password', function (done) {
+    it('runs add-generic-password -a/-s/-w through `security -i` (password on stdin, not argv) and returns the password', function (done) {
       mock.respond({ code: 0 });
       keychain.setPassword({ account: 'me', service: 'svc', password: 'pw' }, function (err, pass) {
         expect(err).to.equal(null);
         expect(pass).to.equal('pw');
-        expect(mock.calls).to.deep.equal([{
-          cmd: '/usr/bin/security',
-          args: ['add-generic-password', '-a', 'me', '-s', 'svc', '-w', 'pw']
-        }]);
+        expect(mock.calls).to.have.length(1);
+        expect(mock.calls[0].cmd).to.equal('/usr/bin/security');
+        expect(mock.calls[0].args).to.deep.equal(['-i']);
+        expect(mock.calls[0].stdinEnded).to.equal(true);
+        expect(mock.commands(mock.calls[0])).to.deep.equal([
+          ['add-generic-password', '-a', 'me', '-s', 'svc', '-w', 'pw']
+        ]);
         done();
       });
     });
@@ -195,7 +197,7 @@ describe('KeychainAccess (unit, mocked security)', function () {
       mock.respond({ code: 0 });
       keychain.setPassword({ account: 'me', service: 'svc', password: 'pw', type: 'internet' }, function (err) {
         expect(err).to.equal(null);
-        expect(mock.calls[0].args[0]).to.equal('add-internet-password');
+        expect(mock.commands(mock.calls[0])[0][0]).to.equal('add-internet-password');
         done();
       });
     });
@@ -207,7 +209,7 @@ describe('KeychainAccess (unit, mocked security)', function () {
       keychain.setPassword({ account: 'me', service: 'svc', password: 'pw' }, function (err, pass) {
         expect(err).to.equal(null);
         expect(pass).to.equal('pw');
-        expect(mock.calls.map(function (c) { return c.args[0]; })).to.deep.equal([
+        expect(mock.calls.map(function (c) { return mock.commands(c)[0][0]; })).to.deep.equal([
           'add-generic-password', 'delete-generic-password', 'add-generic-password'
         ]);
         done();
@@ -260,10 +262,9 @@ describe('KeychainAccess (unit, mocked security)', function () {
       mock.respond({ code: 0 });
       keychain.deletePassword({ account: 'me', service: 'svc' }, function (err) {
         expect(err).to.equal(null);
-        expect(mock.calls).to.deep.equal([{
-          cmd: '/usr/bin/security',
-          args: ['delete-generic-password', '-a', 'me', '-s', 'svc']
-        }]);
+        expect(mock.calls).to.have.length(1);
+        expect(mock.calls[0].cmd).to.equal('/usr/bin/security');
+        expect(mock.calls[0].args).to.deep.equal(['delete-generic-password', '-a', 'me', '-s', 'svc']);
         done();
       });
     });
@@ -303,15 +304,17 @@ describe('KeychainAccess (unit, mocked security)', function () {
   });
 
   describe('.createKeychain(opts, fn)', function () {
-    it('spawns security create-keychain -p <password> <name> and returns the name', function (done) {
+    it('runs create-keychain -p <password> -- <name> through `security -i` and returns the name', function (done) {
       mock.respond({ code: 0 });
       keychain.createKeychain({ keychainName: 'test.keychain', password: 'pw' }, function (err, name) {
         expect(err).to.equal(null);
         expect(name).to.equal('test.keychain');
-        expect(mock.calls).to.deep.equal([{
-          cmd: '/usr/bin/security',
-          args: ['create-keychain', '-p', 'pw', 'test.keychain']
-        }]);
+        expect(mock.calls).to.have.length(1);
+        expect(mock.calls[0].cmd).to.equal('/usr/bin/security');
+        expect(mock.calls[0].args).to.deep.equal(['-i']);
+        expect(mock.commands(mock.calls[0])).to.deep.equal([
+          ['create-keychain', '-p', 'pw', '--', 'test.keychain']
+        ]);
         done();
       });
     });
@@ -346,15 +349,14 @@ describe('KeychainAccess (unit, mocked security)', function () {
   });
 
   describe('.deleteKeychain(opts, fn)', function () {
-    it('spawns security delete-keychain <name> and returns the name', function (done) {
+    it('spawns security delete-keychain -- <name> and returns the name', function (done) {
       mock.respond({ code: 0 });
       keychain.deleteKeychain({ keychainName: 'test.keychain' }, function (err, name) {
         expect(err).to.equal(null);
         expect(name).to.equal('test.keychain');
-        expect(mock.calls).to.deep.equal([{
-          cmd: '/usr/bin/security',
-          args: ['delete-keychain', 'test.keychain']
-        }]);
+        expect(mock.calls).to.have.length(1);
+        expect(mock.calls[0].cmd).to.equal('/usr/bin/security');
+        expect(mock.calls[0].args).to.deep.equal(['delete-keychain', '--', 'test.keychain']);
         done();
       });
     });
@@ -387,15 +389,14 @@ describe('KeychainAccess (unit, mocked security)', function () {
   });
 
   describe('.setDefaultKeychain(opts, fn)', function () {
-    it('spawns security default-keychain -s <name> and returns the name', function (done) {
+    it('spawns security default-keychain -s -- <name> and returns the name', function (done) {
       mock.respond({ code: 0 });
       keychain.setDefaultKeychain({ keychainName: 'login.keychain' }, function (err, name) {
         expect(err).to.equal(null);
         expect(name).to.equal('login.keychain');
-        expect(mock.calls).to.deep.equal([{
-          cmd: '/usr/bin/security',
-          args: ['default-keychain', '-s', 'login.keychain']
-        }]);
+        expect(mock.calls).to.have.length(1);
+        expect(mock.calls[0].cmd).to.equal('/usr/bin/security');
+        expect(mock.calls[0].args).to.deep.equal(['default-keychain', '-s', '--', 'login.keychain']);
         done();
       });
     });
@@ -428,11 +429,14 @@ describe('KeychainAccess (unit, mocked security)', function () {
   });
 
   describe('argument safety', function () {
-    it('passes hostile account/service/password values as discrete argv entries, never through a shell', function (done) {
+    it('passes hostile account/service/password values as discrete tokens security parses, never through a shell', function (done) {
       var evil = '$(touch /tmp/pwned); `id`; foo | bar && baz';
       mock.respond({ code: 0 });
       keychain.setPassword({ account: evil, service: evil, password: evil }, function () {
-        expect(mock.calls[0].args).to.deep.equal(['add-generic-password', '-a', evil, '-s', evil, '-w', evil]);
+        expect(mock.calls[0].args).to.deep.equal(['-i']);
+        expect(mock.commands(mock.calls[0])).to.deep.equal([
+          ['add-generic-password', '-a', evil, '-s', evil, '-w', evil]
+        ]);
         done();
       });
     });
