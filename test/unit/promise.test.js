@@ -1,8 +1,8 @@
 // Promise API: every method returns a Promise when no callback is passed, and
 // behaves exactly as before when one is. Mocked, so it runs on any OS.
-var fake = require('./helpers/fake-spawn');
+var fake = require('../helpers/fake-spawn');
 fake.install();
-var keychain = require('../');
+var keychain = require('../../');
 fake.restore();
 var chai = require('chai');
 chai.should();

@@ -1,7 +1,7 @@
 // Real-keychain checks for the security hardening (macOS only): passwords sent
 // through `security -i` must round-trip exactly, and nothing in them may run
 // as a second command. Skipped on other platforms.
-var keychain = require('../');
+var keychain = require('../../');
 var chai = require('chai');
 chai.should();
 

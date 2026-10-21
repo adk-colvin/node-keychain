@@ -1,8 +1,8 @@
 // Pins 1.5.0's error behavior on every path, through both the callback and the
 // promise API. Mocked, so it runs on any OS.
-var fake = require('./helpers/fake-spawn');
+var fake = require('../helpers/fake-spawn');
 fake.install();
-var keychain = require('../');
+var keychain = require('../../');
 fake.restore();
 var errors = keychain.constructor.errors;
 var chai = require('chai');

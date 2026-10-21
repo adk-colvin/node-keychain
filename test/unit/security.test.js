@@ -1,8 +1,8 @@
 // Security properties of how keychain.js drives `security`. Mocked, so it runs
 // on any OS; fake.commands() shows what `security` would actually execute.
-var fake = require('./helpers/fake-spawn');
+var fake = require('../helpers/fake-spawn');
 fake.install();
-var keychain = require('../');
+var keychain = require('../../');
 fake.restore();
 var chai = require('chai');
 chai.should();

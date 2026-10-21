@@ -1,8 +1,8 @@
 // setPassword retries once (delete, then add again) when the item already
 // exists (exit 45). Mocked, so it runs on any OS.
-var fake = require('./helpers/fake-spawn');
+var fake = require('../helpers/fake-spawn');
 fake.install();
-var keychain = require('../');
+var keychain = require('../../');
 fake.restore();
 var chai = require('chai');
 chai.should();
