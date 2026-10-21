@@ -35,3 +35,15 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: node test/smoke/old-node.js
+
+  # Mocked suite under c8 (no macOS needed): fails below 95% lines / 90% branches.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run coverage
+      - run: npm audit --audit-level=low
