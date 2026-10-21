@@ -8,8 +8,14 @@
  * Module dependencies.
  */
 
-var spawn = require('child_process').spawn;
+var childProcess = require('child_process');
 var noop = function () {};
+
+function spawn(command, args) {
+  // Looked up at call time so tests can stub child_process.spawn.
+  // Always an argument array and never a shell, so option values can't inject commands.
+  return childProcess.spawn(command, args);
+}
 
 // Polyfill Buffer.from for Node < 4 that didn't have a #from method
 if (!Buffer.from) {
@@ -105,15 +111,21 @@ KeychainAccess.prototype.getPassword = function(opts, fn) {
       //
       // e.g. password '∆˚ˆ©ƒ®∂çµ˚¬˙ƒ®†¥' becomes:
       // password: 0xE28886CB9ACB86C2A9C692C2AEE28882C3A7C2B5CB9AC2ACCB99C692C2AEE280A0C2A5
-      if (/^password: 0x([0-9a-fA-F]+)/.test(password)) {
-        var hexPassword = password.match(/0x([0-9a-fA-F]+)/, '')[1];
-        fn(null, Buffer.from(hexPassword, 'hex').toString());
+      var hexMatch = password.match(/^password: 0x([0-9a-fA-F]+)/m);
+      if (hexMatch) {
+        fn(null, Buffer.from(hexMatch[1], 'hex').toString());
+        return;
       }
       // Otherwise the password will be in quotes:
       // password: "passWithoutSlash"
-      else {
-        fn(null, password.match(/"(.*)\"/, '')[1]);
+      var quotedMatch = password.match(/"(.*)\"/);
+      if (quotedMatch) {
+        fn(null, quotedMatch[1]);
+        return;
       }
+      // Output we can't parse: report it rather than throwing inside the event handler.
+      err = new KeychainAccess.errors.PasswordNotFoundError();
+      fn(err, null);
     }
     else {
       err = new KeychainAccess.errors.PasswordNotFoundError();
@@ -254,6 +266,7 @@ KeychainAccess.prototype.deletePassword = function(opts, fn) {
 KeychainAccess.prototype.createKeychain = function(opts, fn) {
   opts = opts || {};
   fn = fn || noop;
+  var err;
 
   if (!opts.keychainName) {
     err = new KeychainAccess.errors.NoKeychainNameProvidedError();
@@ -298,6 +311,7 @@ KeychainAccess.prototype.createKeychain = function(opts, fn) {
 KeychainAccess.prototype.deleteKeychain = function(opts, fn) {
   opts = opts || {};
   fn = fn || noop;
+  var err;
 
   if (!opts.keychainName) {
     err = new KeychainAccess.errors.NoKeychainNameProvidedError();
@@ -337,6 +351,7 @@ KeychainAccess.prototype.deleteKeychain = function(opts, fn) {
 KeychainAccess.prototype.setDefaultKeychain = function(opts, fn) {
   opts = opts || {};
   fn = fn || noop;
+  var err;
 
   if (!opts.keychainName) {
     err = new KeychainAccess.errors.NoKeychainNameProvidedError();
@@ -388,6 +403,70 @@ errorClass('ServiceFailure', 'Keychain failed to start child process: ');
 errorClass('PasswordNotFound', 'Could not find password');
 errorClass('NoKeychainNameProvided', 'A keychain name is required');
 
+
+/**
+ * Promise support.
+ *
+ * Every public method keeps its callback signature exactly. When no callback
+ * is passed, it returns a Promise that resolves with the value the callback
+ * would have received, or rejects with the same error object.
+ */
+
+var PUBLIC_METHODS = [
+  'getPassword',
+  'setPassword',
+  'deletePassword',
+  'createKeychain',
+  'deleteKeychain',
+  'setDefaultKeychain'
+];
+
+// Node emits both 'error' and 'close' when spawn fails, so make sure a
+// caller's callback runs at most once.
+function once(fn) {
+  var called = false;
+  return function () {
+    if (called) return;
+    called = true;
+    return fn.apply(this, arguments);
+  };
+}
+
+function withPromise(method) {
+  return function (opts, fn) {
+    if (typeof fn === 'function') {
+      method.call(this, opts, once(fn));
+      return;
+    }
+
+    // No callback and no Promise (very old Node): behave as before.
+    if (typeof Promise !== 'function') {
+      method.call(this, opts, noop);
+      return;
+    }
+
+    var self = this;
+    var promise = new Promise(function (resolve, reject) {
+      method.call(self, opts, function (err, value) {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(value);
+        }
+      });
+    });
+
+    // Callers that used to fire and forget (no callback) never saw errors.
+    // Mark the promise handled so they don't start crashing on unhandled
+    // rejections; anyone who awaits or .catch()es still gets the error.
+    promise.catch(noop);
+    return promise;
+  };
+}
+
+PUBLIC_METHODS.forEach(function (name) {
+  KeychainAccess.prototype[name] = withPromise(KeychainAccess.prototype[name]);
+});
 
 /**
  * Expose new Keychain Access
