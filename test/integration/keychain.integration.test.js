@@ -1,9 +1,16 @@
-var keychain = require('../');
+var keychain = require('../../');
 var chai = require('chai');
 
 chai.should();
 
-describe('KeychainAccess', function(){
+// Integration suite: talks to the real macOS `security` CLI and mutates the
+// login keychain. Runs only on darwin; everywhere else it is skipped and the
+// mocked unit suite in test/unit covers behavior.
+describe('KeychainAccess (integration, macOS only)', function(){
+  before(function () {
+    if (process.platform !== 'darwin') this.skip();
+  });
+
   var testService = 'KeychainAccess#test#' + Date.now();
   var testInternetService = 'KeychainAccess' + Date.now() + '.com';
 
@@ -12,10 +19,6 @@ describe('KeychainAccess', function(){
   var unicodePW = "∆˚ˆ©ƒ®∂çµ˚¬˙ƒ®†¥";
   var asciiComplexPW = "password: 0x4e6573746564";
   var keychainName = "test.keychain";
-
-  it('should be running on a mac', function(){
-    require('os').platform().should.equal('darwin');
-  })
 
   it('should have access to ' + keychain.executablePath, function(){
     require('fs').existsSync(keychain.executablePath).should.equal(true);

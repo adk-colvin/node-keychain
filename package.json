@@ -1,14 +1,21 @@
 {
   "name": "keychain",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Basic access to the Mac OS X Keychain",
   "main": "keychain.js",
+  "files": [
+    "keychain.js"
+  ],
   "devDependencies": {
+    "c8": "^12.0.0",
     "chai": "^4.3.7",
-    "mocha": "^10.2.0"
+    "mocha": "^12.0.3"
   },
   "scripts": {
-    "test": "mocha"
+    "test": "mocha \"test/{unit,integration}/**/*.test.js\"",
+    "test:unit": "mocha \"test/unit/**/*.test.js\"",
+    "test:integration": "mocha \"test/integration/**/*.test.js\"",
+    "coverage": "c8 mocha \"test/{unit,integration}/**/*.test.js\""
   },
   "repository": {
     "type": "git",

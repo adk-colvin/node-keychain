@@ -1,0 +1,11 @@
+{
+  "all": true,
+  "include": ["keychain.js"],
+  "reporter": ["text", "lcov"],
+  "reports-dir": "coverage",
+  "check-coverage": true,
+  "lines": 95,
+  "functions": 90,
+  "branches": 90,
+  "statements": 95
+}
