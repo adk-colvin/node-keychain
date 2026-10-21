@@ -13,7 +13,9 @@
   },
   "scripts": {
     "test": "mocha",
-    "coverage": "c8 mocha --ignore test/keychain.test.js"
+    "test:unit": "mocha test/unit",
+    "test:integration": "mocha test/integration",
+    "coverage": "c8 mocha"
   },
   "repository": {
     "type": "git",
