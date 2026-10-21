@@ -10,14 +10,14 @@ jobs:
   # Mocked unit + compat suite: runs everywhere, enforces c8 coverage thresholds
   # (95% lines / 90% branches / 90% functions) and npm audit.
   unit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         node: [ 20, 22, 24 ]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: npm install
@@ -33,8 +33,8 @@ jobs:
       matrix:
         node: [ 20, 22, 24 ]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: npm install
@@ -43,14 +43,14 @@ jobs:
   # The test runner needs Node 20.19+, but the library has no engine
   # requirement; this checks it still runs on older Node, with security mocked.
   old-node:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         node: [ 10, 12, 14, 16, 18 ]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: node test/smoke/old-node.js
