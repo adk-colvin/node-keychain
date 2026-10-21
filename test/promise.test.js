@@ -105,7 +105,7 @@ describe('promise API (mocked security)', function () {
     };
     return keychain.setPassword({ account: 'a', service: 's', password: 'new' }).then(function (pw) {
       pw.should.equal('new');
-      fake.calls.map(function (c) { return c.args[0]; })
+      fake.calls.map(function (c) { return fake.commands(c)[0][0]; })
         .should.deep.equal(['add-generic-password', 'delete-generic-password', 'add-generic-password']);
     });
   });

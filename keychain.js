@@ -17,6 +17,39 @@ function spawn(command, args) {
   return childProcess.spawn(command, args);
 }
 
+/**
+ * Run a `security` command whose arguments include a secret without putting
+ * the secret on the command line, where any local process can read it (ps).
+ *
+ * `security -i` reads commands from stdin and splits them itself (split_line in
+ * Apple's SecurityTool/macOS/security.c): inside double quotes, a backslash
+ * escapes the next character. Its readline() stops at "\n" or after 4095
+ * bytes, and a NUL ends the string, so a line that can't make the trip intact
+ * is run the old way, on the command line, rather than risk being split into
+ * a second command.
+ */
+
+var MAX_INTERACTIVE_LINE_BYTES = 4094;
+
+function quoteInteractiveArg(arg) {
+  return '"' + String(arg).replace(/[\\"]/g, '\\$&') + '"';
+}
+
+function spawnWithSecret(command, args) {
+  var line = args.map(quoteInteractiveArg).join(' ');
+
+  if (/[\n\0]/.test(line) || Buffer.byteLength(line, 'utf8') > MAX_INTERACTIVE_LINE_BYTES) {
+    return spawn(command, args);
+  }
+
+  var child = spawn(command, ['-i']);
+  // If security exits before reading stdin, the write fails with EPIPE; the
+  // exit code still reaches the 'close' handler.
+  child.stdin.on('error', noop);
+  child.stdin.end(line + '\n');
+  return child;
+}
+
 // Polyfill Buffer.from for Node < 4 that didn't have a #from method
 if (!Buffer.from) {
   Buffer.from = function (data, encoding, len) {
@@ -172,7 +205,7 @@ KeychainAccess.prototype.setPassword = function(opts, fn) {
     return;
   }
 
-  var security = spawn(this.executablePath, [ 'add-'+opts.type+'-password', '-a', opts.account, '-s', opts.service, '-w', opts.password ]);
+  var security = spawnWithSecret(this.executablePath, [ 'add-'+opts.type+'-password', '-a', opts.account, '-s', opts.service, '-w', opts.password ]);
   var self = this;
 
   security.on('error', function(err) {
@@ -280,7 +313,7 @@ KeychainAccess.prototype.createKeychain = function(opts, fn) {
     return;
   }
 
-  var security = spawn(this.executablePath, [ 'create-keychain', '-p', opts.password, opts.keychainName]);
+  var security = spawnWithSecret(this.executablePath, [ 'create-keychain', '-p', opts.password, '--', opts.keychainName ]);
 
   security.on('error', function(err) {
     err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
@@ -319,7 +352,7 @@ KeychainAccess.prototype.deleteKeychain = function(opts, fn) {
     return;
   }
 
-  var security = spawn(this.executablePath, [ 'delete-keychain', opts.keychainName]);
+  var security = spawn(this.executablePath, [ 'delete-keychain', '--', opts.keychainName ]);
 
   security.on('error', function(err) {
     err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
@@ -359,7 +392,7 @@ KeychainAccess.prototype.setDefaultKeychain = function(opts, fn) {
     return;
   }
 
-  var security = spawn(this.executablePath, [ 'default-keychain', '-s', opts.keychainName]);
+  var security = spawn(this.executablePath, [ 'default-keychain', '-s', '--', opts.keychainName ]);
 
   security.on('error', function(err) {
     err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
