@@ -302,6 +302,76 @@ describe('Backwards compatibility (pinned at 1.5.0)', function () {
       });
     });
 
+    // `security -i` reads one line per command and its readline() stops at a
+    // newline or after 4095 bytes, so values that cannot survive that transport
+    // fall back to the 1.5.0 behaviour: the full command in argv, nothing on
+    // stdin. Pinned so the fallback stays byte-identical to what 1.5.0 ran.
+    describe('falls back to the 1.5.0 argv transport when the line cannot go through `security -i`', function () {
+      var LIMIT = 4094;
+      var fallbackValues = [
+        ['newline', 'pass\nword'],
+        ['NUL byte', 'pass\0word'],
+        ['line over ' + LIMIT + ' bytes', 'x'.repeat(LIMIT + 1)]
+      ];
+
+      fallbackValues.forEach(function (c) {
+        var label = c[0], value = c[1];
+
+        it('setPassword with a ' + label + ' password: argv is the 1.5.0 argv, stdin untouched', function (done) {
+          mock.respond({ code: 0 });
+          var expected = ['add-generic-password', '-a', 'A', '-s', 'S', '-w', value];
+          keychain.setPassword({ account: 'A', service: 'S', password: value }, function (err, pw) {
+            expect(err).to.equal(null);
+            expect(pw).to.equal(value);
+            expect(mock.calls).to.have.length(1);
+            expect(mock.calls[0].args).to.deep.equal(expected);
+            expect(mock.calls[0].args).to.not.include('-i');
+            expect(mock.calls[0].stdin).to.equal('');
+            done();
+          });
+        });
+
+        it('createKeychain with a ' + label + ' password: argv is the 1.5.0 argv plus "--", stdin untouched', function (done) {
+          mock.respond({ code: 0 });
+          var expected = ['create-keychain', '-p', value, '--', 'K'];
+          keychain.createKeychain({ keychainName: 'K', password: value }, function (err, name) {
+            expect(err).to.equal(null);
+            expect(name).to.equal('K');
+            expect(mock.calls).to.have.length(1);
+            expect(mock.calls[0].args).to.deep.equal(expected);
+            expect(mock.calls[0].stdin).to.equal('');
+            done();
+          });
+        });
+      });
+
+      it('a command line of exactly ' + LIMIT + ' bytes still travels on stdin (boundary)', function (done) {
+        // Every token is double-quoted on the -i line; the password fills what is left of the limit.
+        var framing = Buffer.byteLength('"add-generic-password" "-a" "A" "-s" "S" "-w" ""', 'utf8');
+        var value = 'x'.repeat(LIMIT - framing);
+        mock.respond({ code: 0 });
+        keychain.setPassword({ account: 'A', service: 'S', password: value }, function (err) {
+          expect(err).to.equal(null);
+          expect(mock.calls[0].args).to.deep.equal(['-i']);
+          expect(Buffer.byteLength(mock.calls[0].stdin, 'utf8')).to.equal(LIMIT + 1); // + trailing newline
+          expect(mock.commands(mock.calls[0])).to.deep.equal([['add-generic-password', '-a', 'A', '-s', 'S', '-w', value]]);
+          done();
+        });
+      });
+
+      it('one byte over the limit falls back to argv (boundary)', function (done) {
+        var framing = Buffer.byteLength('"add-generic-password" "-a" "A" "-s" "S" "-w" ""', 'utf8');
+        var value = 'x'.repeat(LIMIT - framing + 1);
+        mock.respond({ code: 0 });
+        keychain.setPassword({ account: 'A', service: 'S', password: value }, function (err) {
+          expect(err).to.equal(null);
+          expect(mock.calls[0].args).to.deep.equal(['add-generic-password', '-a', 'A', '-s', 'S', '-w', value]);
+          expect(mock.calls[0].stdin).to.equal('');
+          done();
+        });
+      });
+    });
+
     it('security is always invoked by absolute path with an argv array (no shell string)', function (done) {
       mock.respond({ code: 0 });
       keychain.setPassword({ account: 'a b', service: 's;rm -rf /', password: '$(id)' }, function () {
