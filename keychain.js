@@ -8,8 +8,47 @@
  * Module dependencies.
  */
 
-var spawn = require('child_process').spawn;
+var childProcess = require('child_process');
 var noop = function () {};
+
+function spawn(command, args) {
+  // Looked up at call time so tests can stub child_process.spawn.
+  // Always an argument array and never a shell, so option values can't inject commands.
+  return childProcess.spawn(command, args);
+}
+
+/**
+ * Run a `security` command whose arguments include a secret without putting
+ * the secret on the command line, where any local process can read it (ps).
+ *
+ * `security -i` reads commands from stdin and splits them itself (split_line in
+ * Apple's SecurityTool/macOS/security.c): inside double quotes, a backslash
+ * escapes the next character. Its readline() stops at "\n" or after 4095
+ * bytes, and a NUL ends the string, so a line that can't make the trip intact
+ * is run the old way, on the command line, rather than risk being split into
+ * a second command.
+ */
+
+var MAX_INTERACTIVE_LINE_BYTES = 4094;
+
+function quoteInteractiveArg(arg) {
+  return '"' + String(arg).replace(/[\\"]/g, '\\$&') + '"';
+}
+
+function spawnWithSecret(command, args) {
+  var line = args.map(quoteInteractiveArg).join(' ');
+
+  if (/[\n\0]/.test(line) || Buffer.byteLength(line, 'utf8') > MAX_INTERACTIVE_LINE_BYTES) {
+    return spawn(command, args);
+  }
+
+  var child = spawn(command, ['-i']);
+  // If security exits before reading stdin, the write fails with EPIPE; the
+  // exit code still reaches the 'close' handler.
+  child.stdin.on('error', noop);
+  child.stdin.end(line + '\n');
+  return child;
+}
 
 // Polyfill Buffer.from for Node < 4 that didn't have a #from method
 if (!Buffer.from) {
@@ -105,15 +144,21 @@ KeychainAccess.prototype.getPassword = function(opts, fn) {
       //
       // e.g. password '∆˚ˆ©ƒ®∂çµ˚¬˙ƒ®†¥' becomes:
       // password: 0xE28886CB9ACB86C2A9C692C2AEE28882C3A7C2B5CB9AC2ACCB99C692C2AEE280A0C2A5
-      if (/^password: 0x([0-9a-fA-F]+)/.test(password)) {
-        var hexPassword = password.match(/0x([0-9a-fA-F]+)/, '')[1];
-        fn(null, Buffer.from(hexPassword, 'hex').toString());
+      var hexMatch = password.match(/^password: 0x([0-9a-fA-F]+)/m);
+      if (hexMatch) {
+        fn(null, Buffer.from(hexMatch[1], 'hex').toString());
+        return;
       }
       // Otherwise the password will be in quotes:
       // password: "passWithoutSlash"
-      else {
-        fn(null, password.match(/"(.*)\"/, '')[1]);
+      var quotedMatch = password.match(/"(.*)\"/);
+      if (quotedMatch) {
+        fn(null, quotedMatch[1]);
+        return;
       }
+      // Output we can't parse: report it rather than throwing inside the event handler.
+      err = new KeychainAccess.errors.PasswordNotFoundError();
+      fn(err, null);
     }
     else {
       err = new KeychainAccess.errors.PasswordNotFoundError();
@@ -160,38 +205,46 @@ KeychainAccess.prototype.setPassword = function(opts, fn) {
     return;
   }
 
-  var security = spawn(this.executablePath, [ 'add-'+opts.type+'-password', '-a', opts.account, '-s', opts.service, '-w', opts.password ]);
   var self = this;
+  var args = [ 'add-'+opts.type+'-password', '-a', opts.account, '-s', opts.service, '-w', opts.password ];
 
-  security.on('error', function(err) {
-    err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
-    fn(err, null);
-    return;
-  });
+  // Exit 45 means the item already exists: delete it and add again, once.
+  // If the add still fails the same way, report it rather than loop forever.
+  function add(retried) {
+    var security = spawnWithSecret(self.executablePath, args);
 
-  security.on('close', function(code, signal) {
-    if (code !== 0) {
-      if (code == 45) {
-        self.deletePassword(opts, function(err) {
-          if (err) {
-            fn(err);
+    security.on('error', function(err) {
+      err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
+      fn(err, null);
+      return;
+    });
+
+    security.on('close', function(code, signal) {
+      if (code !== 0) {
+        if (code == 45 && !retried) {
+          self.deletePassword(opts, function(err) {
+            if (err) {
+              fn(err);
+              return;
+            }
+
+            add(true);
             return;
-          }
-
-          self.setPassword(opts, fn);
+          });
+        } else {
+          var msg = 'Security returned a non-successful error code: ' + code;
+          err = new KeychainAccess.errors.ServiceFailureError(msg);
+          err.exitCode = code;
+          fn(err);
           return;
-        });
+        }
       } else {
-        var msg = 'Security returned a non-successful error code: ' + code;
-        err = new KeychainAccess.errors.ServiceFailureError(msg);
-        err.exitCode = code;
-        fn(err);
-        return;
+        fn(null, opts.password);
       }
-    } else {
-      fn(null, opts.password);
-    }
-  });
+    });
+  }
+
+  add(false);
 };
 
 /**
@@ -254,6 +307,7 @@ KeychainAccess.prototype.deletePassword = function(opts, fn) {
 KeychainAccess.prototype.createKeychain = function(opts, fn) {
   opts = opts || {};
   fn = fn || noop;
+  var err;
 
   if (!opts.keychainName) {
     err = new KeychainAccess.errors.NoKeychainNameProvidedError();
@@ -267,7 +321,7 @@ KeychainAccess.prototype.createKeychain = function(opts, fn) {
     return;
   }
 
-  var security = spawn(this.executablePath, [ 'create-keychain', '-p', opts.password, opts.keychainName]);
+  var security = spawnWithSecret(this.executablePath, [ 'create-keychain', '-p', opts.password, '--', opts.keychainName ]);
 
   security.on('error', function(err) {
     err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
@@ -298,6 +352,7 @@ KeychainAccess.prototype.createKeychain = function(opts, fn) {
 KeychainAccess.prototype.deleteKeychain = function(opts, fn) {
   opts = opts || {};
   fn = fn || noop;
+  var err;
 
   if (!opts.keychainName) {
     err = new KeychainAccess.errors.NoKeychainNameProvidedError();
@@ -305,7 +360,7 @@ KeychainAccess.prototype.deleteKeychain = function(opts, fn) {
     return;
   }
 
-  var security = spawn(this.executablePath, [ 'delete-keychain', opts.keychainName]);
+  var security = spawn(this.executablePath, [ 'delete-keychain', '--', opts.keychainName ]);
 
   security.on('error', function(err) {
     err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
@@ -337,6 +392,7 @@ KeychainAccess.prototype.deleteKeychain = function(opts, fn) {
 KeychainAccess.prototype.setDefaultKeychain = function(opts, fn) {
   opts = opts || {};
   fn = fn || noop;
+  var err;
 
   if (!opts.keychainName) {
     err = new KeychainAccess.errors.NoKeychainNameProvidedError();
@@ -344,7 +400,7 @@ KeychainAccess.prototype.setDefaultKeychain = function(opts, fn) {
     return;
   }
 
-  var security = spawn(this.executablePath, [ 'default-keychain', '-s', opts.keychainName]);
+  var security = spawn(this.executablePath, [ 'default-keychain', '-s', '--', opts.keychainName ]);
 
   security.on('error', function(err) {
     err = new KeychainAccess.errors.ServiceFailureError(null, err.message);
@@ -388,6 +444,70 @@ errorClass('ServiceFailure', 'Keychain failed to start child process: ');
 errorClass('PasswordNotFound', 'Could not find password');
 errorClass('NoKeychainNameProvided', 'A keychain name is required');
 
+
+/**
+ * Promise support.
+ *
+ * Every public method keeps its callback signature exactly. When no callback
+ * is passed, it returns a Promise that resolves with the value the callback
+ * would have received, or rejects with the same error object.
+ */
+
+var PUBLIC_METHODS = [
+  'getPassword',
+  'setPassword',
+  'deletePassword',
+  'createKeychain',
+  'deleteKeychain',
+  'setDefaultKeychain'
+];
+
+// Node emits both 'error' and 'close' when spawn fails, so make sure a
+// caller's callback runs at most once.
+function once(fn) {
+  var called = false;
+  return function () {
+    if (called) return;
+    called = true;
+    return fn.apply(this, arguments);
+  };
+}
+
+function withPromise(method) {
+  return function (opts, fn) {
+    if (typeof fn === 'function') {
+      method.call(this, opts, once(fn));
+      return;
+    }
+
+    // No callback and no Promise (very old Node): behave as before.
+    if (typeof Promise !== 'function') {
+      method.call(this, opts, noop);
+      return;
+    }
+
+    var self = this;
+    var promise = new Promise(function (resolve, reject) {
+      method.call(self, opts, function (err, value) {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(value);
+        }
+      });
+    });
+
+    // Callers that used to fire and forget (no callback) never saw errors.
+    // Mark the promise handled so they don't start crashing on unhandled
+    // rejections; anyone who awaits or .catch()es still gets the error.
+    promise.catch(noop);
+    return promise;
+  };
+}
+
+PUBLIC_METHODS.forEach(function (name) {
+  KeychainAccess.prototype[name] = withPromise(KeychainAccess.prototype[name]);
+});
 
 /**
  * Expose new Keychain Access
