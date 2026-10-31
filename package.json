@@ -11,6 +11,10 @@
     "chai": "^4.3.7",
     "mocha": "^12.0.3"
   },
+  "overrides": {
+    "glob": "^14.0.3",
+    "minimatch": "^11.0.3"
+  },
   "scripts": {
     "test": "mocha \"test/{unit,integration}/**/*.test.js\"",
     "test:unit": "mocha \"test/unit/**/*.test.js\"",
